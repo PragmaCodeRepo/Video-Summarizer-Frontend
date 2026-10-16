@@ -1,11 +1,29 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowUpRight, CheckCircle2, Clapperboard, FileVideo2, Film, FolderOpen, LoaderCircle, Play, Plus, Search, Sparkles, Tags, Upload, X } from 'lucide-react';
-import { analyzeWithApi, apiRequest, isApiConfigured, uploadVideoWithApi } from './services/apiClient';
+import { Activity, ArrowUpRight, CheckCircle2, Clapperboard, FileVideo2, Film, FolderOpen, LoaderCircle, LogOut, Play, Plus, Search, Sparkles, Tags, Upload, X } from 'lucide-react';
+import { analyzeWithApi, apiRequest, currentAccountWithApi, getAuthToken, isApiConfigured, logoutWithApi, setAuthToken, uploadVideoWithApi, type Account, type AuthSession } from './services/apiClient';
+import { AuthPage } from './components/AuthPage';
 import type { Category, VideoRecord } from './types/video';
 
 const categories: Array<'All materials' | Category> = ['All materials', 'Design', 'Content', 'Marketing'];
 
 function App() {
+  const [account, setAccount] = useState<Account | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isApiConfigured || !getAuthToken()) { setAuthLoading(false); return; }
+    currentAccountWithApi().then((current) => setAccount(current)).catch(() => setAuthToken(null)).finally(() => setAuthLoading(false));
+  }, []);
+
+  const signedIn = (session: AuthSession) => { setAuthToken(session.token); setAccount(session.user); };
+  const signOut = async () => { try { await logoutWithApi(); } catch { /* Clear the local session even if the network is unavailable. */ } finally { setAuthToken(null); setAccount(null); } };
+
+  if (authLoading) return <div className="app-loading"><span className="loading-mark"><Film size={19} /></span><span>Preparing your workspace…</span></div>;
+  if (!account) return <AuthPage onAuthenticated={signedIn} />;
+  return <Dashboard account={account} onLogout={() => void signOut()} />;
+}
+
+function Dashboard({ account, onLogout }: { account: Account; onLogout: () => void }) {
   const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -69,7 +87,7 @@ function App() {
 
   const badge = { checking: 'Connecting', offline: 'Backend offline', 'key-missing': 'OpenAI key needed', ready: 'Connected' }[apiState];
   return <div className="dashboard-shell">
-    <header className="dashboard-topbar"><a className="brand" href="#top"><span className="brand-mark"><Film size={18} /></span><span><b>VIDEO INTELLIGENCE</b><small>KNOWLEDGE WORKSPACE</small></span></a><div className="header-right"><span className="connection-pill"><i className={`connection-dot ${apiState}`} />{badge}</span><a className="header-link" href="http://localhost:8000/api/health/" target="_blank" rel="noreferrer">API status <ArrowUpRight size={13} /></a></div></header>
+    <header className="dashboard-topbar"><a className="brand" href="#top"><span className="brand-mark"><Film size={18} /></span><span><b>VIDEO INTELLIGENCE</b><small>KNOWLEDGE WORKSPACE</small></span></a><div className="header-right"><span className="connection-pill"><i className={`connection-dot ${apiState}`} />{badge}</span><a className="header-link" href={`${import.meta.env.VITE_API_BASE_URL || ''}/api/health/`} target="_blank" rel="noreferrer">API status <ArrowUpRight size={13} /></a><span className="account-chip"><i>{account.name.trim().charAt(0).toUpperCase()}</i><span>{account.name}</span></span><button className="logout-button" type="button" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut size={15} /></button></div></header>
 
     <main id="top" className="dashboard-main">
       <div className="dashboard-title"><div><div className="breadcrumb">WORKSPACE <span>/</span> LEARNING LIBRARY</div><h1>Training Material Discovery</h1><p>Turn your video library into searchable, reusable learning resources.</p></div><button className="primary-small" onClick={() => document.getElementById('video-file')?.click()}><Plus size={15} /> Add training video</button></div>
