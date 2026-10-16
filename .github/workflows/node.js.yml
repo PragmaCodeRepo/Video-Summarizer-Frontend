@@ -1,0 +1,49 @@
+name: React Vite CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Verify Build
+        run: |
+          echo "Build completed successfully"
+          ls -la
+          ls -la dist
+
+      - name: Deploy to Nginx
+        run: |
+          sudo mkdir -p /var/www/html
+          sudo rm -rf /var/www/html/*
+          sudo cp -r dist/* /var/www/html/
+
+      - name: Restart Nginx
+        run: |
+          sudo systemctl restart nginx
+          sudo systemctl status nginx --no-pager
+
+      - name: Deployment Complete
+        run: echo "Application deployed successfully!"
