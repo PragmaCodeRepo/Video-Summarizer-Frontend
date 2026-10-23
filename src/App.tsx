@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowUpRight, CheckCircle2, Clapperboard, FileVideo2, Film, FolderOpen, LoaderCircle, LogOut, Play, Plus, Search, Sparkles, Tags, Upload, X } from 'lucide-react';
-import { analyzeWithApi, apiRequest, currentAccountWithApi, getAuthToken, isApiConfigured, logoutWithApi, setAuthToken, uploadVideoWithApi, type Account, type AuthSession } from './services/apiClient';
+import { Activity, ArrowUpRight, CheckCircle2, Clapperboard, FileVideo2, Film, FolderOpen, FolderSync, LoaderCircle, LogOut, Play, Plus, Search, Sparkles, Tags, Upload, X } from 'lucide-react';
+import { analyzeWithApi, apiRequest, currentAccountWithApi, getAuthToken, getSharePointImport, isApiConfigured, listSharePointImports, logoutWithApi, setAuthToken, startSharePointImport, uploadVideoWithApi, type Account, type AuthSession, type SharePointImport } from './services/apiClient';
 import { AuthPage } from './components/AuthPage';
+import { UserManual } from './components/UserManual';
 import type { Category, VideoRecord } from './types/video';
 
 const categories: Array<'All materials' | Category> = ['All materials', 'Design', 'Content', 'Marketing'];
@@ -24,6 +25,7 @@ function App() {
 }
 
 function Dashboard({ account, onLogout }: { account: Account; onLogout: () => void }) {
+  const [manualOpen, setManualOpen] = useState(window.location.hash === '#manual');
   const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -36,16 +38,35 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
   const [apiState, setApiState] = useState<'checking' | 'offline' | 'key-missing' | 'ready'>('checking');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [sharepointConfigured, setSharepointConfigured] = useState(false);
+  const [sharepointFolderName, setSharepointFolderName] = useState('SharePoint video folder');
+  const [sharepointJob, setSharepointJob] = useState<SharePointImport | null>(null);
 
   const refresh = () => {
     if (!isApiConfigured) { setApiState('offline'); setLoading(false); return; }
-    Promise.all([apiRequest<VideoRecord[]>('/api/videos/'), apiRequest<{ openaiConfigured: boolean }>('/api/health/')])
-      .then(([records, health]) => { setVideos(records ?? []); setApiState(health?.openaiConfigured ? 'ready' : 'key-missing'); setError(''); })
+    Promise.all([apiRequest<VideoRecord[]>('/api/videos/'), apiRequest<{ openaiConfigured: boolean; sharepointConfigured: boolean; sharepointFolderName: string }>('/api/health/'), listSharePointImports().catch(() => null)])
+      .then(([records, health, imports]) => { setVideos(records ?? []); setApiState(health?.openaiConfigured ? 'ready' : 'key-missing'); setSharepointConfigured(Boolean(health?.sharepointConfigured)); setSharepointFolderName(health?.sharepointFolderName || 'SharePoint video folder'); setSharepointJob(imports?.[0] ?? null); setError(''); })
       .catch((reason: unknown) => { setApiState('offline'); setError(reason instanceof Error ? reason.message : 'Could not connect to Django.'); })
       .finally(() => setLoading(false));
   };
   useEffect(() => { refresh(); }, []);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 3200); return () => window.clearTimeout(timer); }, [notice]);
+  useEffect(() => {
+    if (!sharepointJob || !['queued', 'processing'].includes(sharepointJob.status)) return;
+    const timer = window.setInterval(() => {
+      getSharePointImport(sharepointJob.id).then((job) => {
+        if (!job) return;
+        const wasActive = ['queued', 'processing'].includes(sharepointJob.status);
+        setSharepointJob(job);
+        if (wasActive && !['queued', 'processing'].includes(job.status)) {
+          apiRequest<VideoRecord[]>('/api/videos/').then((records) => setVideos(records ?? []));
+          const skipped = Math.max(0, job.processed - job.imported - job.failed);
+          setNotice(job.status === 'failed' ? 'SharePoint folder import failed.' : job.total === 0 ? 'No supported videos were found in the SharePoint folder.' : `SharePoint import finished: ${job.imported} new${skipped ? `, ${skipped} already in your library` : ''}${job.failed ? `, ${job.failed} failed` : ''}.`);
+        }
+      }).catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [sharepointJob]);
 
   const visibleVideos = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -57,6 +78,15 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
   const categoryCount = (category: Category) => videos.filter((video) => video.categories.includes(category)).length;
 
   const clearFile = () => { setFile(null); const input = document.getElementById('video-file') as HTMLInputElement | null; if (input) input.value = ''; };
+  const importSharePointFolder = async () => {
+    setError('');
+    try {
+      const job = await startSharePointImport();
+      if (!job) throw new Error('Django did not start the SharePoint import.');
+      setSharepointJob(job);
+      setNotice(`Queued ${job.folderName} for analysis.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not start the SharePoint folder import.'); }
+  };
   const handleAnalyze = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setError(''); setNotice('');
     if (!file && !transcript.trim()) { setError('Select a video or paste a transcript first.'); return; }
@@ -87,8 +117,9 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
 
   const badge = { checking: 'Connecting', offline: 'Backend offline', 'key-missing': 'OpenAI key needed', ready: 'Connected' }[apiState];
   return <div className="dashboard-shell">
-    <header className="dashboard-topbar"><a className="brand" href="#top"><span className="brand-mark"><Film size={18} /></span><span><b>VIDEO INTELLIGENCE</b><small>KNOWLEDGE WORKSPACE</small></span></a><div className="header-right"><span className="connection-pill"><i className={`connection-dot ${apiState}`} />{badge}</span><a className="header-link" href={`${import.meta.env.VITE_API_BASE_URL || ''}/api/health/`} target="_blank" rel="noreferrer">API status <ArrowUpRight size={13} /></a><span className="account-chip"><i>{account.name.trim().charAt(0).toUpperCase()}</i><span>{account.name}</span></span><button className="logout-button" type="button" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut size={15} /></button></div></header>
+    <header className="dashboard-topbar"><a className="brand" href="#top" onClick={() => { setManualOpen(false); window.location.hash = 'top'; }}><span className="brand-mark"><Film size={18} /></span><span><b>VIDEO INTELLIGENCE</b><small>KNOWLEDGE WORKSPACE</small></span></a><div className="header-right"><span className="connection-pill"><i className={`connection-dot ${apiState}`} />{badge}</span><a className="header-link" href={`${import.meta.env.VITE_API_BASE_URL || ''}/api/health/`} target="_blank" rel="noreferrer">API status <ArrowUpRight size={13} /></a><button type="button" className="manual-nav-link" onClick={() => { setManualOpen(true); window.location.hash = 'manual'; }}>User manual</button><span className="account-chip"><i>{account.name.trim().charAt(0).toUpperCase()}</i><span>{account.name}</span></span><button className="logout-button" type="button" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut size={15} /></button></div></header>
 
+    {manualOpen ? <UserManual onBack={() => { setManualOpen(false); window.location.hash = 'top'; }} /> : <>
     <main id="top" className="dashboard-main">
       <div className="dashboard-title"><div><div className="breadcrumb">WORKSPACE <span>/</span> LEARNING LIBRARY</div><h1>Training Material Discovery</h1><p>Turn your video library into searchable, reusable learning resources.</p></div><button className="primary-small" onClick={() => document.getElementById('video-file')?.click()}><Plus size={15} /> Add training video</button></div>
 
@@ -99,8 +130,22 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
         <Metric icon={<Activity size={16} />} label="AVG. KB SCORE" value={`${avgScore}%`} detail="Knowledge base usefulness" tone="rose" />
       </section>
 
+      <section className={`sharepoint-hero ${sharepointJob?.status === 'failed' ? 'has-error' : ''}`} aria-labelledby="sharepoint-title">
+        <div className="sharepoint-hero-copy">
+          <div className="sharepoint-eyebrow"><FolderSync size={14} /> PRIMARY SOURCE · MICROSOFT SHAREPOINT</div>
+          <h2 id="sharepoint-title">Analyze your training video folder</h2>
+          <p>Import videos from the configured SharePoint folder. Each video is transcribed, summarized, classified, and added to your searchable training library.</p>
+          <div className="sharepoint-folder-summary"><span className="sharepoint-folder-icon"><FolderSync size={17} /></span><span><small>CONNECTED FOLDER</small><b>{sharepointConfigured ? sharepointFolderName : 'Microsoft Graph setup required'}</b></span><span className={`sharepoint-status ${sharepointConfigured ? 'connected' : 'disconnected'}`}><i />{sharepointConfigured ? 'Ready to import' : 'Not configured'}</span></div>
+          {sharepointConfigured ? <button type="button" className="sharepoint-import-button" onClick={() => void importSharePointFolder()} disabled={Boolean(sharepointJob && ['queued', 'processing'].includes(sharepointJob.status))}><FolderSync size={16} />{sharepointJob && ['queued', 'processing'].includes(sharepointJob.status) ? 'Import in progress…' : sharepointJob?.status === 'failed' ? 'Retry folder import' : 'Analyze SharePoint folder'}<span>→</span></button> : <p className="sharepoint-setup-hint">Configure Microsoft Graph access in the backend environment. Keep the app secret on the server.</p>}
+          {sharepointJob && ['queued', 'processing'].includes(sharepointJob.status) && <div className="sharepoint-progress"><span>{sharepointJob.status === 'queued' ? 'Queued · waiting for the SharePoint worker' : `Analyzed ${sharepointJob.processed} of ${sharepointJob.total || '…'} videos`}</span>{sharepointJob.total > 0 && <i><b style={{ width: `${Math.min(100, Math.round(sharepointJob.processed / sharepointJob.total * 100))}%` }} /></i>}</div>}
+          {sharepointJob?.status === 'failed' && sharepointJob.errors[0] && <div role="alert" className="sharepoint-job-error"><b>Import could not start</b><span>{sharepointJob.errors[0].detail}</span><small>Check that the backend SharePoint worker is running and can reach Microsoft Graph.</small></div>}
+          {sharepointJob && ['completed', 'completed_with_errors'].includes(sharepointJob.status) && <div className="sharepoint-complete"><CheckCircle2 size={15} />{sharepointJob.total === 0 ? 'No supported videos found in this folder.' : <>Last import: {sharepointJob.imported} new {sharepointJob.imported === 1 ? 'video' : 'videos'} added{sharepointJob.processed > sharepointJob.imported + sharepointJob.failed ? ` · ${sharepointJob.processed - sharepointJob.imported - sharepointJob.failed} already in your library` : ''}{sharepointJob.failed ? ` · ${sharepointJob.failed} need attention` : ''}.</>}</div>}
+        </div>
+        <div className="sharepoint-hero-art" aria-hidden="true"><div className="sharepoint-art-folder"><FolderSync size={42} /><span>SharePoint</span><b>{sharepointConfigured ? sharepointFolderName : 'Video folder'}</b></div><div className="sharepoint-art-arrow">→</div><div className="sharepoint-art-result"><Sparkles size={20} /><b>AI insights</b><span>Summary · Topics · Categories</span></div></div>
+      </section>
+
       <section className="dashboard-grid">
-        <aside className="panel import-panel"><div className="panel-heading"><div><h2>Import training video</h2><p>Upload a video or provide its transcript</p></div><span className="panel-icon"><Upload size={16} /></span></div>
+        <aside className="panel import-panel"><div className="panel-heading"><div><h2>Other ways to add content</h2><p>Upload an individual video or paste its transcript</p></div><span className="panel-icon"><Upload size={16} /></span></div>
           <form onSubmit={handleAnalyze} className="import-form">
             <div className="compact-field"><label htmlFor="video-title">VIDEO TITLE <span>OPTIONAL FOR VIDEO</span></label><input id="video-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Design system onboarding" /></div>
             <div className="compact-field"><label htmlFor="source-url">SHAREPOINT LINK <span>OPTIONAL</span></label><input id="source-url" type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="Paste a link to keep with the record" /></div>
@@ -114,7 +159,7 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
             {error && <div role="alert" className="error-banner">{error}</div>}
             <button className="analyze-button" type="submit" disabled={processing || apiState === 'offline'}>{processing ? <><LoaderCircle size={15} className="spin" /> Processing video…</> : <><Sparkles size={15} /> Transcribe &amp; analyze</>}</button>
           </form>
-          <div className="sharepoint-note"><FileVideo2 size={14} /><span>SharePoint links are saved with a record. Direct import needs Microsoft Graph sign-in and permissions.</span></div>
+          <div className="sharepoint-note"><FileVideo2 size={14} /><span>For full-folder analysis, use the SharePoint import above. Individual uploads are also available here.</span></div>
         </aside>
 
         <section className="panel library-panel"><div className="library-header"><div><div className="library-title-line"><span className="panel-icon"><FolderOpen size={16} /></span><div><h2>Training library</h2><p>Summaries and insights from your real video content</p></div></div></div><label className="library-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search training library" placeholder="Search videos, topics…" /></label></div>
@@ -127,6 +172,7 @@ function Dashboard({ account, onLogout }: { account: Account; onLogout: () => vo
       </section>
       <footer className="dashboard-footer"><span>AI summaries can contain errors. Review content before including it in official training.</span><span>TRAINING &amp; KNOWLEDGE BASE DISCOVERY</span></footer>
     </main>
+    </>}
     {notice && <div role="status" className="toast"><CheckCircle2 size={16} />{notice}</div>}
   </div>;
 }

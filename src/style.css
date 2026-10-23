@@ -294,3 +294,17 @@ code {
     border-right-color: var(--border);
   }
 }
+.sharepoint-import-box { margin-top:13px; padding:10px; border:1px solid #e4e7ef; border-radius:7px; background:linear-gradient(135deg,#fafaff,#f7fbfa); }
+.sharepoint-import-heading { display:flex; align-items:center; gap:8px; }
+.sharepoint-folder-icon { display:grid; width:27px; height:27px; flex:none; place-items:center; color:#6170ce; border:1px solid #e1e4fa; border-radius:7px; background:#eff0ff; }
+.sharepoint-import-heading b,.sharepoint-import-heading small { display:block; }
+.sharepoint-import-heading b { color:#41495d; font-size:8px; }
+.sharepoint-import-heading small { margin-top:3px; color:#848da0; font-size:7px; }
+.sharepoint-import-box>p { margin:8px 0 0; color:#858ea0; font-size:7px; line-height:1.55; }
+.sharepoint-import-button { display:flex; width:100%; min-height:29px; align-items:center; justify-content:center; gap:6px; margin-top:9px; color:#5361c3; border:1px solid #dfe3fa; border-radius:5px; background:#f1f2ff; font-size:8px; font-weight:650; cursor:pointer; }
+.sharepoint-import-button:hover:not(:disabled) { border-color:#c9cff5; background:#e8ebff; }
+.sharepoint-import-button:disabled { cursor:wait; opacity:.68; }
+.sharepoint-progress { margin-top:8px; color:#727d92; font-size:7px; }
+.sharepoint-progress i { display:block; height:4px; margin-top:5px; overflow:hidden; border-radius:4px; background:#e8eaf3; }
+.sharepoint-progress i b { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#6472d9,#8c80df); transition:width .3s ease; }
+.sharepoint-job-error { color:#ad5362!important; }
